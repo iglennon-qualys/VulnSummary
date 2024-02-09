@@ -10,6 +10,8 @@ from xml.etree import ElementTree as ET
 
 # Get the IDs of host names contained in list
 def get_host_ids(hostnames: list, api: QualysAPI):
+    print('INFO : Note: Assets without a QWEB Host ID will be excluded as there are is no vulnerability data for them')
+    print(f'INFO : Getting Host IDs for {len(hostnames)} hosts.', end='')
     page_size = 1000
     offset = 1
     if len(hostnames) == 0:
@@ -40,14 +42,16 @@ def get_host_ids(hostnames: list, api: QualysAPI):
             more_data = False
         hosts += response['ServiceResponse']['data']
         offset += page_size
+        print('.', end='')
 
     # With all the hostnames, use a little magic list comprehension to isolate the assets for which there
     # is a qwebHostId (meaning it has vulnerabilities) and where the hostname is in the target list
     ids = [ha['HostAsset']['qwebHostId']
            for ha in hosts
            if 'qwebHostId' in ha['HostAsset'].keys() and ha['HostAsset']['name'] in hostnames]
-
+    print(' Done')
     return ids
+
 
 def get_vulns(api: QualysAPI, ids: list, qds_min: int, qds_max: int):
     url = f'{api.server}/api/2.0/fo/asset/host/vm/detection/'
@@ -119,6 +123,7 @@ if __name__ == '__main__':
     # Main script body
     # Start with reading in the CSV file containing the hostnames
     hostnames = []
+    print('INFO : Reading input file')
     with open(args.input_file, 'r') as inputfile:
         csvreader = csv.reader(inputfile, delimiter=',', quotechar='"')
         for row in csvreader:
@@ -128,11 +133,16 @@ if __name__ == '__main__':
     # and then picking out the ones we want.
     # We can use the Asset Management & Tagging API to do this because it costs nothing.
     ids = get_host_ids(hostnames=hostnames, api=api)
+    print(f'INFO : Got {len(ids)} Host IDs')
 
     # Next we can get the detections in the 4 different categories for the hosts
+    print('INFO : Getting Critical vulnerability data')
     crit_results = get_vulns(api=api, ids=ids, qds_min=90, qds_max=100)
+    print('INFO : Getting High vulnerability data')
     high_results = get_vulns(api=api, ids=ids, qds_min=70, qds_max=89)
+    print('INFO : Getting Medium vulnerability data')
     med_results = get_vulns(api=api, ids=ids, qds_min=40, qds_max=69)
+    print('INFO : Getting Low vulnerability data')
     low_results = get_vulns(api=api, ids=ids, qds_min=1, qds_max=39)
 
     # With all the data now in the results variables, we now process it and record the summaries against the assets
@@ -151,6 +161,7 @@ if __name__ == '__main__':
     vuln_data = []
     totals = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
 
+    print('INFO : Processing vulnerability data')
     for host in crit_results.findall('.//HOST'):
         hostId = host.find('ID').text
         hostname = host.find('DNS').text
@@ -200,7 +211,16 @@ if __name__ == '__main__':
         totals['low'] += detection_count
 
     # Finally we output the data into a CSV file
-    with open(args.output_file, 'w', newline='') as output_file:
+    file_elements = args.output_file.split('.')
+    if len(file_elements) == 1:
+        output_file_name = f'{args.output_file}.csv'
+    elif file_elements[len(file_elements)-1] != 'csv':
+        output_file_name = f'{args.output_file}.csv'
+    else:
+        output_file_name = args.output_file
+
+    print(f'INFO : Writing output file {output_file_name}')
+    with open(output_file_name, 'w', newline='') as output_file:
         csv_output = csv.writer(output_file, delimiter=',', quotechar='"')
         csv_output.writerow(['Hostname', 'Critical', 'High', 'Medium', 'Low'])
         for host in vuln_data:
@@ -209,5 +229,3 @@ if __name__ == '__main__':
 
     output_file.close()
     exit(0)
-
-    #TODO Add some helpful output to let the user know what's happening
